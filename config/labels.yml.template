@@ -1,0 +1,38 @@
+# config/labels.yml — taxonomy source of truth
+#
+# Copy to $FATHOM_DATA_ROOT/config/labels.yml (drop the .template suffix).
+# Hand-editable. Merged into by `npm run apply-labels`.
+#
+# Relationship tags (per person): advisor_to, advisor, prospective_advisor,
+#   client, former_client, prospective_client, partner, former_partner,
+#   prospective_partner, former_prospective_partner, candidate, vendor,
+#   team, colleague, friend, family, connection
+# Call-type tags (per meeting): sales, qualification, prospecting, demo,
+#   onboarding, check_in, advisory, pitch, interview, planning, strategy,
+#   networking, internal, meetings, social
+# Company tags (per domain): self, client_org, former_client_org,
+#   prospective_client_org, partner_org, former_partner_org,
+#   prospective_partner_org, former_prospective_partner_org, advisor_to_org,
+#   advisor_org, prospective_advisor_org, vendor_org, former_vendor_org, friend_org
+#
+# Auto-derived at transform time (do not author here): internal, advisory
+
+people: {}
+  # example@example.com:
+  #   relationships:
+  #     - "client"
+  #   notes: "Optional note"
+
+call_types: {}
+  # 1234567:
+  #   tags:
+  #     - "sales"
+
+companies: {}
+  # example.com:
+  #   tags:
+  #     - "client_org"
+
+skipped:
+  people: []
+  companies: []

@@ -1,0 +1,26 @@
+[Unit]
+Description=Fathom KB nightly sync (extract + transform + embed)
+Documentation=https://github.com/opsMachine/FathomMCP
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Documents/GitHub/FathomMCP
+ExecStart=%h/Documents/GitHub/FathomMCP/scripts/nightly-sync.sh
+
+# Corpus lives inside OM-Repo so the data and the strategy
+# artifacts version together. paths.ts and nightly-sync.sh both honor this.
+Environment=FATHOM_DATA_ROOT=%h/Documents/GitHub/OM-Repo/fathom-vault
+
+# Be a polite background citizen on a laptop.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+# If a step crashes, fail the unit so `systemctl --user list-units --failed`
+# surfaces it instead of silently looking healthy.
+SuccessExitStatus=0
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,15 @@
+node_modules/
+dist/
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.local
+data/raw/
+data/vectors/
+data/sync-state.json
+data/proposals.yml
+data/candidates/
+data/logs/
+data/.sync.lock
+vault/Meetings/

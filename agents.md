@@ -1,0 +1,1 @@
+Type-safety is a fundamental, always honor type safety, never defeat it to solve a problem. 

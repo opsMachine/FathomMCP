@@ -1,0 +1,37 @@
+{
+  "name": "fathom-kb",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "extract": "tsx src/extract.ts",
+    "transform": "tsx src/transform.ts",
+    "embed": "tsx src/embed.ts",
+    "query": "tsx src/query.ts",
+    "mcp": "tsx src/mcp-server.ts",
+    "sync": "tsx src/extract.ts && tsx src/transform.ts",
+    "import:embed": "tsx src/extract.ts && tsx src/transform.ts && tsx src/embed.ts",
+    "sync:nightly": "bash scripts/nightly-sync.sh",
+    "prep:people": "tsx src/prep-people.ts",
+    "prep:calls": "tsx src/prep-calls.ts",
+    "prep:companies": "tsx src/prep-companies.ts",
+    "apply-labels": "tsx src/apply-labels.ts"
+  },
+  "dependencies": {
+    "@lancedb/lancedb": "^0.27.2",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@xenova/transformers": "^2.17.2",
+    "better-sqlite3": "^12.9.0",
+    "commander": "^14.0.3",
+    "dotenv": "^16.4.7",
+    "p-throttle": "^6.2.0",
+    "yaml": "^2.8.3",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.15.2",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}

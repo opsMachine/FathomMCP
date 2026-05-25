@@ -1,0 +1,22 @@
+[Unit]
+Description=Run Fathom KB nightly sync at 03:00 local time
+
+[Timer]
+# Local time on the host (system tz is America/Toronto).
+OnCalendar=*-*-* 03:00:00
+
+# If the laptop was asleep / powered off when 03:00 hit, run as soon
+# as we wake up. This is the whole reason we're using systemd over cron.
+Persistent=true
+
+# Smear the start across a 5-minute window in case multiple timers
+# converge on 03:00.
+RandomizedDelaySec=5min
+
+# Keep AccuracySec tight so we actually fire near the requested time.
+AccuracySec=1min
+
+Unit=fathom-sync.service
+
+[Install]
+WantedBy=timers.target
