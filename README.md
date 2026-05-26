@@ -35,6 +35,9 @@ cp config/labels.yml.template ~/Documents/GitHub/my-workspace/fathom-vault/confi
 cp .env.example .env
 # Edit .env:
 #   FATHOM_API_KEY=...        # https://app.fathom.video/settings/integrations
+#                             # Keep in gitignored .env only — or use OneCLI
+#                             # (https://github.com/onecli/onecli) to proxy requests
+#                             # so the key never touches a file on disk.
 #   FATHOM_DATA_ROOT=/abs/path/to/my-workspace/fathom-vault
 
 npm run extract
@@ -43,7 +46,7 @@ npm run embed
 npm run mcp   # smoke-test MCP server (Ctrl+C to exit)
 ```
 
-Register in your IDE's `.cursor/mcp.json` (see `.cursor/mcp.json` if present, or copy from your meta-workspace template) with the same `FATHOM_DATA_ROOT`.
+Register in your IDE's `.cursor/mcp.json` with `FATHOM_DATA_ROOT` pointing at your corpus. If you use [seed-workspace](https://github.com/opsMachine/seed-workspace), the generalized `infra/transcript-vault-mcp/` ships a tested MCP config template — see `.cursor/mcp.json.template` there.
 
 ---
 
