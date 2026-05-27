@@ -61,7 +61,20 @@ run_step() {
 
 echo "[$(ts)] === Fathom nightly sync starting (node=$(node --version 2>/dev/null || echo missing)) ==="
 
-run_step "extract"   npm run --silent extract
+# OneCLI proxy — optional. If ONECLI_AGENT_ACCESS_TOKEN is set, route
+# extract through the gateway so the real API key never touches disk.
+# If not set, extract runs directly (FATHOM_API_KEY must be a real key in .env).
+if [ -n "${ONECLI_AGENT_ACCESS_TOKEN:-}" ]; then
+  # shellcheck disable=SC1091
+  source "$REPO_ROOT/scripts/onecli-proxy-env.sh"
+  echo "[$(ts)] OneCLI proxy active (FATHOM_API_KEY placeholder → vault injection)"
+  EXTRACT_CMD="npm run --silent extract:onecli"
+else
+  echo "[$(ts)] Direct mode (FATHOM_API_KEY from .env)"
+  EXTRACT_CMD="npm run --silent extract"
+fi
+
+run_step "extract"   $EXTRACT_CMD
 run_step "transform" npm run --silent transform
 run_step "embed"     npm run --silent embed
 

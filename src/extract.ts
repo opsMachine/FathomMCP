@@ -9,8 +9,16 @@ config();
 
 const API_KEY = process.env.FATHOM_API_KEY;
 if (!API_KEY) {
-  console.error("Missing FATHOM_API_KEY in .env");
+  console.error(
+    "Missing FATHOM_API_KEY in .env — see .env.example for direct and OneCLI modes"
+  );
   process.exit(1);
+}
+if (API_KEY === "Fathom" && !process.env.HTTP_PROXY) {
+  console.warn(
+    "Warning: FATHOM_API_KEY=Fathom (OneCLI placeholder) but HTTP_PROXY is not set. " +
+    "Use npm run extract:onecli or set proxy env vars. Continuing anyway."
+  );
 }
 
 mkdirSync(RAW_DIR, { recursive: true });

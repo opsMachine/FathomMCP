@@ -33,14 +33,13 @@ mkdir -p ~/Documents/GitHub/my-workspace/fathom-vault/config
 cp config/labels.yml.template ~/Documents/GitHub/my-workspace/fathom-vault/config/labels.yml
 
 cp .env.example .env
-# Edit .env:
-#   FATHOM_API_KEY=...        # https://app.fathom.video/settings/integrations
-#                             # Keep in gitignored .env only — or use OneCLI
-#                             # (https://github.com/onecli/onecli) to proxy requests
-#                             # so the key never touches a file on disk.
+# Edit .env — see .env.example for direct vs OneCLI modes:
+#   Direct: FATHOM_API_KEY=<real key> → npm run extract
+#   OneCLI: FATHOM_API_KEY=Fathom + ONECLI_* → npm run extract:onecli (https://github.com/onecli/onecli)
 #   FATHOM_DATA_ROOT=/abs/path/to/my-workspace/fathom-vault
 
-npm run extract
+npm run extract          # direct API key from .env
+# npm run extract:onecli # optional: via OneCLI gateway
 npm run transform
 npm run embed
 npm run mcp   # smoke-test MCP server (Ctrl+C to exit)
