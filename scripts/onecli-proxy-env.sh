@@ -24,8 +24,8 @@ if [ -z "$TOKEN" ]; then
   exit 1
 fi
 
-# Token embedded in proxy URL (basic auth) — how OneCLI expects it
-# Use the aoc_ prefix token (from /api/agents response), not the oc_ management token
+# aoc_ agent token as basic auth in proxy URL — OneCLI's documented auth method for MITM mode.
+# Bearer HTTP_PROXY_AUTH only gets tunnel mode (no header injection).
 AOC_TOKEN="${ONECLI_AOC_TOKEN:-${ONECLI_AGENT_ACCESS_TOKEN}}"
 PROXY_URL="http://x:${AOC_TOKEN}@${GATEWAY#http://}"
 export HTTP_PROXY="$PROXY_URL"
@@ -34,7 +34,6 @@ export http_proxy="$PROXY_URL"
 export https_proxy="$PROXY_URL"
 export NO_PROXY="${NO_PROXY:-localhost,127.0.0.1}"
 export NODE_USE_ENV_PROXY=1
-export GIT_HTTP_PROXY_AUTHMETHOD=basic
 export FATHOM_API_KEY="${FATHOM_API_KEY:-Fathom}"
 
 # OneCLI CA cert — enables MITM mode so the gateway can inject headers.
@@ -51,7 +50,7 @@ else
   exit 1
 fi
 
-if [ "$FATHOM_API_KEY" != "Fathom" ]; then
-  echo "onecli-proxy-env: FATHOM_API_KEY should be placeholder 'Fathom' (real key lives in OneCLI vault)" >&2
+if [[ "$FATHOM_API_KEY" == fath_* ]]; then
+  echo "onecli-proxy-env: FATHOM_API_KEY looks like a real key — set it to the OneCLI secret name ('Fathom') instead" >&2
   exit 1
 fi
