@@ -1,31 +1,145 @@
-import { readFileSync, readdirSync, existsSync } from "node:fs";
-import { join } from "node:path";
-import type { Meeting } from "./lib/types.js";
-import { chunksForMeeting, type Chunk } from "./lib/chunk.js";
-import { embedBatch } from "./lib/embed-model.js";
-import { openVectorDb, openOrCreateTable, type VectorRow } from "./lib/vectors.js";
-import { RAW_DIR } from "./lib/paths.js";
+import "./lib/configure-onnx.js";
 
-const BATCH_SIZE = 32;
-const FLUSH_EVERY = 256;
+import { spawn } from "node:child_process";
+import { existsSync, readdirSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  embedMeetingFile,
+  meetingPath,
+  openEmbedTable,
+} from "./lib/embed-meeting.js";
+import { RAW_DIR, DATA_ROOT } from "./lib/paths.js";
 
-// Pass --fresh (or FRESH=1) to drop the table and re-embed everything.
-// Default behavior is resumable: skip chunks whose id already exists.
 const FRESH =
   process.argv.includes("--fresh") || process.env.FRESH === "1";
+const ISOLATED =
+  process.argv.includes("--isolated") ||
+  process.env.EMBED_ISOLATED === "1";
+const WORKER = process.argv.includes("--worker");
 
-async function loadExistingIds(
-  table: Awaited<ReturnType<typeof openOrCreateTable>>
-): Promise<Set<string>> {
-  const existing = new Set<string>();
-  const count = await table.countRows();
-  if (count === 0) return existing;
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-  const rows = await table.query().select(["id"]).toArray();
-  for (const row of rows) {
-    if (row && typeof row.id === "string") existing.add(row.id);
+function workerFileArg(): string | null {
+  const idx = process.argv.indexOf("--worker");
+  if (idx === -1) return null;
+  return process.argv[idx + 1] ?? null;
+}
+
+async function runWorker(file: string): Promise<void> {
+  const table = await openEmbedTable(false);
+  const path = meetingPath(RAW_DIR, file);
+  const { embedded, skipped } = await embedMeetingFile(path, table);
+  if (embedded > 0) {
+    console.log(`  ${file}: embedded ${embedded}, skipped ${skipped}`);
   }
-  return existing;
+}
+
+async function runInProcess(): Promise<void> {
+  const files = readdirSync(RAW_DIR)
+    .filter((f) => f.endsWith(".json"))
+    .sort();
+
+  console.log(`Found ${files.length} meetings (in-process)`);
+  const table = await openEmbedTable(FRESH);
+
+  const start = Date.now();
+  let totalEmbedded = 0;
+  let totalSkipped = 0;
+  let meetingsDone = 0;
+
+  for (const file of files) {
+    const { embedded, skipped } = await embedMeetingFile(
+      meetingPath(RAW_DIR, file),
+      table
+    );
+    totalEmbedded += embedded;
+    totalSkipped += skipped;
+    meetingsDone++;
+
+    if (embedded > 0) {
+      console.log(`  ${file}: embedded ${embedded}, skipped ${skipped}`);
+    }
+
+    if (meetingsDone % 50 === 0) {
+      const elapsed = (Date.now() - start) / 1000;
+      console.log(
+        `  progress ${meetingsDone}/${files.length} meetings (${totalEmbedded} chunks, ${elapsed.toFixed(0)}s)`
+      );
+    }
+  }
+
+  if (totalEmbedded === 0) {
+    console.log(`\nNothing to do. ${totalSkipped} chunks already stored.`);
+    return;
+  }
+
+  console.log(
+    `\nDone. embedded ${totalEmbedded} chunks, skipped ${totalSkipped} existing.`
+  );
+}
+
+function spawnWorker(file: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const script = join(REPO_ROOT, "src/embed.ts");
+    const child = spawn(
+      "npx",
+      ["tsx", script, "--worker", file],
+      {
+        cwd: REPO_ROOT,
+        env: {
+          ...process.env,
+          FATHOM_DATA_ROOT: DATA_ROOT,
+        },
+        stdio: "inherit",
+      }
+    );
+    child.on("error", reject);
+    child.on("exit", (code, signal) => {
+      if (signal) reject(new Error(`worker ${file} killed by ${signal}`));
+      else resolve(code ?? 1);
+    });
+  });
+}
+
+async function runIsolated(): Promise<void> {
+  const files = readdirSync(RAW_DIR)
+    .filter((f) => f.endsWith(".json"))
+    .sort();
+
+  if (FRESH) {
+    await openEmbedTable(true);
+  }
+
+  console.log(
+    `Found ${files.length} meetings (isolated — one subprocess per meeting)`
+  );
+
+  const start = Date.now();
+  let failures = 0;
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const code = await spawnWorker(file);
+    if (code !== 0) {
+      failures++;
+      console.error(`  ${file}: worker exited ${code}`);
+    }
+
+    if ((i + 1) % 25 === 0) {
+      const elapsed = (Date.now() - start) / 1000;
+      console.log(
+        `  progress ${i + 1}/${files.length} meetings (${elapsed.toFixed(0)}s)`
+      );
+    }
+  }
+
+  if (failures > 0) {
+    console.error(`\nFinished with ${failures} failed meeting(s). Re-run to resume.`);
+    process.exit(1);
+  }
+
+  console.log(`\nDone. ${files.length} meetings processed.`);
 }
 
 async function main() {
@@ -34,125 +148,22 @@ async function main() {
     process.exit(1);
   }
 
-  const files = readdirSync(RAW_DIR).filter((f) => f.endsWith(".json"));
-  console.log(`Loading ${files.length} meetings...`);
-
-  const allChunks: Chunk[] = [];
-  for (const file of files) {
-    const meeting: Meeting = JSON.parse(
-      readFileSync(join(RAW_DIR, file), "utf-8")
-    );
-    allChunks.push(...chunksForMeeting(meeting));
-  }
-
-  console.log(`Prepared ${allChunks.length} chunks total`);
-
-  const db = await openVectorDb();
-
-  if (FRESH) {
-    const names = await db.tableNames();
-    if (names.includes("chunks")) {
-      console.log("--fresh: dropping existing chunks table");
-      await db.dropTable("chunks");
+  if (WORKER) {
+    const file = workerFileArg();
+    if (!file) {
+      console.error("Usage: tsx src/embed.ts --worker <file.json>");
+      process.exit(1);
     }
-  }
-
-  const table = await openOrCreateTable(db);
-
-  // Resume: skip chunks already in the table.
-  let chunks = allChunks;
-  if (!FRESH) {
-    const existingCount = await table.countRows();
-    if (existingCount > 0) {
-      console.log(
-        `Found ${existingCount} existing vectors — resuming (use --fresh to rebuild)`
-      );
-      const existingIds = await loadExistingIds(table);
-      chunks = allChunks.filter((c) => !existingIds.has(c.id));
-      console.log(
-        `  ${allChunks.length - chunks.length} already embedded, ${chunks.length} remaining`
-      );
-    }
-  }
-
-  if (chunks.length === 0) {
-    const count = await table.countRows();
-    console.log(`\nNothing to do. ${count} vectors already stored.`);
+    await runWorker(file);
     return;
   }
 
-  console.log(`Embedding ${chunks.length} chunks...`);
-
-  const start = Date.now();
-  let processed = 0;
-  let pending: VectorRow[] = [];
-
-  const flushPending = async () => {
-    if (pending.length === 0) return;
-    await table.add(pending as unknown as Record<string, unknown>[]);
-    pending = [];
-  };
-
-  // Flush-on-exit so Ctrl+C keeps partial progress.
-  let interrupted = false;
-  const onSignal = (sig: NodeJS.Signals) => {
-    if (interrupted) return;
-    interrupted = true;
-    console.log(`\nReceived ${sig}, flushing ${pending.length} pending rows...`);
-  };
-  process.once("SIGINT", onSignal);
-  process.once("SIGTERM", onSignal);
-
-  try {
-    for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
-      if (interrupted) break;
-
-      const batch = chunks.slice(i, i + BATCH_SIZE);
-      const texts = batch.map((c) => c.text);
-      const vectors = await embedBatch(texts);
-
-      for (let j = 0; j < batch.length; j++) {
-        pending.push({
-          id: batch[j].id,
-          recording_id: batch[j].recording_id,
-          kind: batch[j].kind,
-          chunk_index: batch[j].chunk_index,
-          text: batch[j].text,
-          start_timestamp: batch[j].start_timestamp ?? "",
-          end_timestamp: batch[j].end_timestamp ?? "",
-          speakers: batch[j].speakers,
-          meeting_date: batch[j].meeting_date,
-          meeting_title: batch[j].meeting_title,
-          participants: batch[j].participants,
-          vector: vectors[j],
-        });
-      }
-
-      processed += batch.length;
-
-      if (pending.length >= FLUSH_EVERY) {
-        await flushPending();
-      }
-
-      if (processed % 256 === 0 || processed === chunks.length) {
-        const elapsed = (Date.now() - start) / 1000;
-        const rate = processed / elapsed;
-        const eta = (chunks.length - processed) / rate;
-        console.log(
-          `  ${processed}/${chunks.length} (${rate.toFixed(1)}/s, eta ${Math.round(eta)}s)`
-        );
-      }
-    }
-  } finally {
-    await flushPending();
+  if (ISOLATED) {
+    await runIsolated();
+    return;
   }
 
-  const count = await table.countRows();
-  if (interrupted) {
-    console.log(`\nInterrupted. ${count} vectors stored. Re-run to resume.`);
-    process.exit(130);
-  }
-  console.log(`\nDone. ${count} vectors stored in data/vectors/`);
+  await runInProcess();
 }
 
 main().catch((err) => {

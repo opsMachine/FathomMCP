@@ -1,4 +1,5 @@
 import type { Meeting, TranscriptItem } from "./types.js";
+import { formatSpeakerLabel } from "./speaker.js";
 
 export interface Chunk {
   id: string;
@@ -58,7 +59,7 @@ function chunkTranscript(
   };
 
   for (const item of transcript) {
-    const speaker = item.speaker.name || item.speaker.email || "Unknown";
+    const speaker = formatSpeakerLabel(item.speaker);
     const line = `${speaker}: ${item.text}`;
     const w = countWords(line);
 

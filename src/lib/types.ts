@@ -40,8 +40,10 @@
  */
 
 export interface TranscriptSpeaker {
-  name: string | null;
-  email: string | null;
+  name?: string | null;
+  email?: string | null;
+  display_name?: string | null;
+  matched_calendar_invitee_email?: string | null;
 }
 
 export interface TranscriptItem {

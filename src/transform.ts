@@ -9,6 +9,7 @@ import {
 import { join } from "node:path";
 import type { Meeting } from "./lib/types.js";
 import { openDb, initSchema, clearAll } from "./lib/db.js";
+import { formatSpeakerLabel } from "./lib/speaker.js";
 import {
   loadLabels,
   applyLabelsToSqlite,
@@ -191,7 +192,7 @@ function buildMeetingMarkdown(meeting: Meeting, labels: Labels): string {
     lines.push("## Transcript");
     lines.push("");
     for (const entry of meeting.transcript) {
-      const speaker = entry.speaker.name || entry.speaker.email || "Unknown";
+      const speaker = formatSpeakerLabel(entry.speaker);
       const ts = formatTimestamp(entry.timestamp);
       lines.push(`**${speaker}** [${ts}]: ${entry.text}`);
       lines.push("");

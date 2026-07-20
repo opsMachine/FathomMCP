@@ -76,7 +76,15 @@ fi
 
 run_step "extract"   $EXTRACT_CMD
 run_step "transform" npm run --silent transform
-run_step "embed"     npm run --silent embed
+
+# Embed: one subprocess per meeting so ONNX native memory is released between
+# meetings. Conservative batch/thread defaults — see src/lib/configure-onnx.ts.
+export EMBED_ISOLATED="${EMBED_ISOLATED:-1}"
+export EMBED_BATCH_SIZE="${EMBED_BATCH_SIZE:-1}"
+export EMBED_FLUSH_EVERY="${EMBED_FLUSH_EVERY:-16}"
+export EMBED_INTRA_OP_THREADS="${EMBED_INTRA_OP_THREADS:-1}"
+export EMBED_INTER_OP_THREADS="${EMBED_INTER_OP_THREADS:-1}"
+run_step "embed" nice -n 19 ionice -c3 npm run --silent embed:isolated
 
 # Hygiene: keep only the last 30 daily logs.
 find "$LOG_DIR" -maxdepth 1 -type f -name 'sync-*.log' -mtime +30 -delete 2>/dev/null || true

@@ -8,6 +8,7 @@
     "extract:onecli": "bash scripts/run-with-onecli.sh src/extract.ts",
     "transform": "tsx src/transform.ts",
     "embed": "tsx src/embed.ts",
+    "embed:isolated": "tsx src/embed.ts --isolated",
     "query": "tsx src/query.ts",
     "mcp": "tsx src/mcp-server.ts",
     "sync": "tsx src/extract.ts && tsx src/transform.ts",

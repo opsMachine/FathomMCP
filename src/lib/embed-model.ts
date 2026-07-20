@@ -1,4 +1,5 @@
 import { pipeline, type FeatureExtractionPipeline } from "@xenova/transformers";
+import { configureOnnxRuntime } from "./configure-onnx.js";
 
 export const EMBED_MODEL = "Xenova/all-MiniLM-L6-v2";
 export const EMBED_DIM = 384;
@@ -6,6 +7,7 @@ export const EMBED_DIM = 384;
 let cached: FeatureExtractionPipeline | null = null;
 
 export async function getEmbedder(): Promise<FeatureExtractionPipeline> {
+  configureOnnxRuntime();
   if (cached) return cached;
   cached = (await pipeline("feature-extraction", EMBED_MODEL, {
     quantized: true,

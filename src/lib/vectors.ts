@@ -7,7 +7,8 @@ import {
   FixedSizeList,
   Float32,
 } from "apache-arrow";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, rmSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import { EMBED_DIM } from "./embed-model.js";
 import { VECTORS_DIR } from "./paths.js";
 
@@ -58,7 +59,19 @@ export async function openOrCreateTable(
 ): Promise<lancedb.Table> {
   const names = await db.tableNames();
   if (names.includes(TABLE_NAME)) {
-    return await db.openTable(TABLE_NAME);
+    try {
+      const table = await db.openTable(TABLE_NAME);
+      await table.countRows();
+      return table;
+    } catch (err) {
+      console.warn(
+        `  LanceDB table "${TABLE_NAME}" is corrupt or unreadable — recreating:`,
+        err instanceof Error ? err.message : err
+      );
+      await db.dropTable(TABLE_NAME);
+      const tablePath = join(VECTOR_DB_PATH, `${TABLE_NAME}.lance`);
+      if (existsSync(tablePath)) rmSync(tablePath, { recursive: true, force: true });
+    }
   }
   return await db.createEmptyTable(TABLE_NAME, chunkSchema);
 }
