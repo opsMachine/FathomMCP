@@ -1,11 +1,13 @@
 import "./lib/configure-onnx.js";
 
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   embedMeetingFile,
+  filterMeetingsNeedingEmbed,
+  loadExistingChunkIds,
   meetingPath,
   openEmbedTable,
 } from "./lib/embed-meeting.js";
@@ -19,6 +21,7 @@ const ISOLATED =
 const WORKER = process.argv.includes("--worker");
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const EXISTING_IDS_CACHE = join(DATA_ROOT, "data", ".embed-existing-ids.json");
 
 function workerFileArg(): string | null {
   const idx = process.argv.indexOf("--worker");
@@ -26,10 +29,51 @@ function workerFileArg(): string | null {
   return process.argv[idx + 1] ?? null;
 }
 
+function loadCachedExistingIds(): Set<string> | null {
+  if (!existsSync(EXISTING_IDS_CACHE)) return null;
+  try {
+    const ids = JSON.parse(readFileSync(EXISTING_IDS_CACHE, "utf-8")) as string[];
+    return new Set(ids);
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedExistingIds(ids: Set<string>): void {
+  writeFileSync(EXISTING_IDS_CACHE, JSON.stringify([...ids]));
+}
+
+async function prepareEmbedRun(
+  files: string[]
+): Promise<{
+  table: Awaited<ReturnType<typeof openEmbedTable>>;
+  existingIds: Set<string>;
+  pending: string[];
+}> {
+  const table = await openEmbedTable(FRESH);
+  const existingIds = FRESH ? new Set<string>() : await loadExistingChunkIds(table);
+  const pending = FRESH
+    ? files
+    : filterMeetingsNeedingEmbed(RAW_DIR, files, existingIds);
+
+  if (!FRESH && existingIds.size > 0) {
+    console.log(
+      `Found ${existingIds.size} existing vectors — ${pending.length} meeting(s) need embedding (${files.length - pending.length} already complete)`
+    );
+  } else {
+    console.log(`Found ${files.length} meetings, ${pending.length} to embed`);
+  }
+
+  return { table, existingIds, pending };
+}
+
 async function runWorker(file: string): Promise<void> {
   const table = await openEmbedTable(false);
+  const cached = loadCachedExistingIds();
+  const existingIds =
+    cached ?? (await loadExistingChunkIds(table));
   const path = meetingPath(RAW_DIR, file);
-  const { embedded, skipped } = await embedMeetingFile(path, table);
+  const { embedded, skipped } = await embedMeetingFile(path, table, existingIds);
   if (embedded > 0) {
     console.log(`  ${file}: embedded ${embedded}, skipped ${skipped}`);
   }
@@ -40,31 +84,36 @@ async function runInProcess(): Promise<void> {
     .filter((f) => f.endsWith(".json"))
     .sort();
 
-  console.log(`Found ${files.length} meetings (in-process)`);
-  const table = await openEmbedTable(FRESH);
+  console.log(`Scanning ${files.length} meetings (in-process)`);
+  const { table, existingIds, pending } = await prepareEmbedRun(files);
+
+  if (pending.length === 0) {
+    console.log(`\nNothing to do. ${existingIds.size} chunks already stored.`);
+    return;
+  }
 
   const start = Date.now();
   let totalEmbedded = 0;
   let totalSkipped = 0;
-  let meetingsDone = 0;
 
-  for (const file of files) {
+  for (let i = 0; i < pending.length; i++) {
+    const file = pending[i];
     const { embedded, skipped } = await embedMeetingFile(
       meetingPath(RAW_DIR, file),
-      table
+      table,
+      existingIds
     );
     totalEmbedded += embedded;
     totalSkipped += skipped;
-    meetingsDone++;
 
     if (embedded > 0) {
       console.log(`  ${file}: embedded ${embedded}, skipped ${skipped}`);
     }
 
-    if (meetingsDone % 50 === 0) {
+    if ((i + 1) % 50 === 0) {
       const elapsed = (Date.now() - start) / 1000;
       console.log(
-        `  progress ${meetingsDone}/${files.length} meetings (${totalEmbedded} chunks, ${elapsed.toFixed(0)}s)`
+        `  progress ${i + 1}/${pending.length} pending meetings (${totalEmbedded} chunks, ${elapsed.toFixed(0)}s)`
       );
     }
   }
@@ -111,15 +160,21 @@ async function runIsolated(): Promise<void> {
     await openEmbedTable(true);
   }
 
-  console.log(
-    `Found ${files.length} meetings (isolated — one subprocess per meeting)`
-  );
+  console.log(`Scanning ${files.length} meetings (isolated — one subprocess per pending meeting)`);
+  const { existingIds, pending } = await prepareEmbedRun(files);
+
+  if (pending.length === 0) {
+    console.log(`\nNothing to do. ${existingIds.size} chunks already stored.`);
+    return;
+  }
+
+  writeCachedExistingIds(existingIds);
 
   const start = Date.now();
   let failures = 0;
 
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i];
+  for (let i = 0; i < pending.length; i++) {
+    const file = pending[i];
     const code = await spawnWorker(file);
     if (code !== 0) {
       failures++;
@@ -129,9 +184,15 @@ async function runIsolated(): Promise<void> {
     if ((i + 1) % 25 === 0) {
       const elapsed = (Date.now() - start) / 1000;
       console.log(
-        `  progress ${i + 1}/${files.length} meetings (${elapsed.toFixed(0)}s)`
+        `  progress ${i + 1}/${pending.length} pending meetings (${elapsed.toFixed(0)}s)`
       );
     }
+  }
+
+  try {
+    unlinkSync(EXISTING_IDS_CACHE);
+  } catch {
+    // cache is best-effort
   }
 
   if (failures > 0) {
@@ -139,7 +200,7 @@ async function runIsolated(): Promise<void> {
     process.exit(1);
   }
 
-  console.log(`\nDone. ${files.length} meetings processed.`);
+  console.log(`\nDone. ${pending.length} meetings processed.`);
 }
 
 async function main() {

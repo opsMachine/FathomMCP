@@ -12,32 +12,30 @@ import {
 export const BATCH_SIZE = Number(process.env.EMBED_BATCH_SIZE ?? "1");
 export const FLUSH_EVERY = Number(process.env.EMBED_FLUSH_EVERY ?? "16");
 
-export async function existingIdsForMeeting(
-  table: Awaited<ReturnType<typeof openOrCreateTable>>,
-  recordingId: number
+/** Load all embedded chunk ids once — avoids per-meeting LanceDB queries on incremental runs. */
+export async function loadExistingChunkIds(
+  table: Awaited<ReturnType<typeof openOrCreateTable>>
 ): Promise<Set<string>> {
-  const rows = (await table
-    .query()
-    .where(`recording_id = ${recordingId}`)
-    .select(["id"])
-    .toArray()) as Array<{ id?: string }>;
-  const ids = new Set<string>();
+  const existing = new Set<string>();
+  const count = await table.countRows();
+  if (count === 0) return existing;
+
+  const rows = (await table.query().select(["id"]).toArray()) as Array<{
+    id?: string;
+  }>;
   for (const row of rows) {
-    if (row?.id) ids.add(row.id);
+    if (row?.id) existing.add(row.id);
   }
-  return ids;
+  return existing;
 }
 
 export async function embedMeetingFile(
   rawPath: string,
-  table: Awaited<ReturnType<typeof openOrCreateTable>>
+  table: Awaited<ReturnType<typeof openOrCreateTable>>,
+  existingIds: Set<string>
 ): Promise<{ embedded: number; skipped: number }> {
   const meeting: Meeting = JSON.parse(readFileSync(rawPath, "utf-8"));
   const meetingChunks = chunksForMeeting(meeting);
-  const existingIds = await existingIdsForMeeting(
-    table,
-    meeting.recording_id
-  );
 
   const chunks = meetingChunks.filter((c) => !existingIds.has(c.id));
   const skipped = meetingChunks.length - chunks.length;
@@ -58,6 +56,7 @@ export async function embedMeetingFile(
 
     for (let j = 0; j < batch.length; j++) {
       pending.push(chunkToRow(batch[j], vectors[j]));
+      existingIds.add(batch[j].id);
     }
 
     embedded += batch.length;
@@ -66,6 +65,23 @@ export async function embedMeetingFile(
 
   await flushPending();
   return { embedded, skipped };
+}
+
+/** Return raw JSON filenames that still have chunks missing from the vector index. */
+export function filterMeetingsNeedingEmbed(
+  rawDir: string,
+  files: string[],
+  existingIds: Set<string>
+): string[] {
+  const pending: string[] = [];
+  for (const file of files) {
+    const meeting: Meeting = JSON.parse(
+      readFileSync(meetingPath(rawDir, file), "utf-8")
+    );
+    const chunks = chunksForMeeting(meeting);
+    if (chunks.some((c) => !existingIds.has(c.id))) pending.push(file);
+  }
+  return pending;
 }
 
 function chunkToRow(chunk: Chunk, vector: number[]): VectorRow {
