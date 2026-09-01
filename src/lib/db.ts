@@ -121,7 +121,11 @@ export function initSchema(db: Database.Database): void {
 }
 
 export function clearAll(db: Database.Database): void {
+  // FKs suspended for the wipe: every table here is repopulated in the same run,
+  // but a table NOT in this list that references meetings makes DELETE FROM
+  // meetings fail forever -- which silently broke the nightly sync 2026-09-01.
   db.exec(`
+    PRAGMA foreign_keys = OFF;
     DELETE FROM meeting_participants;
     DELETE FROM meeting_companies;
     DELETE FROM person_labels;
@@ -131,5 +135,6 @@ export function clearAll(db: Database.Database): void {
     DELETE FROM participants;
     DELETE FROM companies;
     DELETE FROM meetings_fts;
+    PRAGMA foreign_keys = ON;
   `);
 }

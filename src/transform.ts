@@ -64,6 +64,18 @@ function extractDomain(email: string): string | null {
   return domain;
 }
 
+function metRange(
+  meetingIds: number[],
+  allMeetings: Map<number, Meeting>
+): { first: string; last: string } | null {
+  const days = meetingIds
+    .map((id) => allMeetings.get(id)?.created_at)
+    .filter((d): d is string => Boolean(d))
+    .map((d) => d.slice(0, 10))
+    .sort();
+  return days.length ? { first: days[0], last: days[days.length - 1] } : null;
+}
+
 interface PersonRecord {
   name: string;
   email: string;
@@ -216,6 +228,11 @@ function buildPersonMarkdown(
   lines.push(`email: "${person.email}"`);
   if (person.domain) lines.push(`company: "${person.domain}"`);
   lines.push(`meeting_count: ${person.meetingIds.length}`);
+  const pRange = metRange(person.meetingIds, allMeetings);
+  if (pRange) {
+    lines.push(`first_met: ${pRange.first}`);
+    lines.push(`last_met: ${pRange.last}`);
+  }
   if (relationships.length > 0) {
     lines.push("relationships:");
     for (const r of relationships) lines.push(`  - "${r}"`);
@@ -281,6 +298,11 @@ function buildCompanyMarkdown(
   lines.push(`domain: "${company.domain}"`);
   lines.push(`meeting_count: ${company.meetingIds.length}`);
   lines.push(`contact_count: ${company.people.size}`);
+  const cRange = metRange(company.meetingIds, allMeetings);
+  if (cRange) {
+    lines.push(`first_met: ${cRange.first}`);
+    lines.push(`last_met: ${cRange.last}`);
+  }
   if (companyTags.length > 0) {
     lines.push("company_relationships:");
     for (const r of companyTags) lines.push(`  - "${r}"`);
