@@ -193,12 +193,22 @@ export interface Labels {
    */
   skippedPeople: Set<string>;
   skippedCompanies: Set<string>;
+  /** alias email -> canonical email, from `alias_of` under people. */
+  personAliases: Map<string, string>;
+}
+
+/** Resolve an email through `alias_of` to its canonical person entry. */
+export function canonicalEmail(labels: Labels, email: string): string {
+  const e = email.toLowerCase().trim();
+  return labels.personAliases.get(e) ?? e;
 }
 
 interface RawLabels {
   people?: Record<
     string,
-    { relationships?: unknown; notes?: unknown } | null | undefined
+    | { relationships?: unknown; notes?: unknown; alias_of?: unknown }
+    | null
+    | undefined
   >;
   meetings?: Record<
     string | number,
@@ -228,6 +238,7 @@ export function loadLabels(path: string = LABELS_PATH): Labels {
     companies: new Map(),
     skippedPeople: new Set(),
     skippedCompanies: new Set(),
+    personAliases: new Map(),
   };
 
   if (!existsSync(path)) return empty;
@@ -247,6 +258,7 @@ export function loadLabels(path: string = LABELS_PATH): Labels {
     companies: new Map(),
     skippedPeople: new Set(),
     skippedCompanies: new Set(),
+    personAliases: new Map(),
   };
 
   if (raw.people && typeof raw.people === "object") {
@@ -254,6 +266,11 @@ export function loadLabels(path: string = LABELS_PATH): Labels {
       if (!entryRaw || typeof entryRaw !== "object") continue;
       const email = String(emailRaw).toLowerCase().trim();
       if (!email) continue;
+
+      if (typeof entryRaw.alias_of === "string" && entryRaw.alias_of.trim()) {
+        labels.personAliases.set(email, entryRaw.alias_of.toLowerCase().trim());
+        continue;
+      }
 
       const tags = Array.isArray(entryRaw.relationships)
         ? (entryRaw.relationships as unknown[])

@@ -5,6 +5,7 @@ import {
   readdirSync,
   mkdirSync,
   existsSync,
+  unlinkSync,
 } from "node:fs";
 import { join } from "node:path";
 import type { Meeting } from "./lib/types.js";
@@ -13,6 +14,7 @@ import { formatSpeakerLabel } from "./lib/speaker.js";
 import {
   loadLabels,
   applyLabelsToSqlite,
+  canonicalEmail,
   type Labels,
   type CallTypeTag,
   type RelationshipTag,
@@ -81,12 +83,50 @@ interface PersonRecord {
   email: string;
   domain: string | null;
   meetingIds: number[];
+  /** Other emails folded in through `alias_of`. */
+  aliases: Set<string>;
+  /** True once a name has been seen on the canonical email itself. */
+  nameFromCanonical: boolean;
 }
 
 interface CompanyRecord {
   domain: string;
   meetingIds: number[];
-  people: Set<string>;
+  people: Set<string>; // canonical emails
+}
+
+/**
+ * Map each output path to a filename, refusing two that differ only by case.
+ * They collapse into one file on Windows/macOS checkouts and leave the vault
+ * permanently dirty.
+ */
+function assignFilenames<T>(
+  items: Iterable<T>,
+  nameOf: (item: T) => string,
+  dir: string
+): Map<T, string> {
+  const out = new Map<T, string>();
+  const seen = new Map<string, string>();
+  for (const item of items) {
+    const filename = sanitizeFilename(nameOf(item));
+    const folded = filename.toLowerCase();
+    const prior = seen.get(folded);
+    if (prior !== undefined && prior !== filename) {
+      throw new Error(
+        `${dir}: "${prior}.md" and "${filename}.md" differ only by case. ` +
+          `Add alias_of in config/labels.yml or rename one.`
+      );
+    }
+    seen.set(folded, filename);
+    out.set(item, filename);
+  }
+  return out;
+}
+
+/** Front-matter `email:` of a vault note, or null. */
+function noteEmail(path: string): string | null {
+  const m = readFileSync(path, "utf-8").match(/^email: "([^"]*)"$/m);
+  return m ? m[1].toLowerCase() : null;
 }
 
 /**
@@ -119,7 +159,7 @@ function deriveCallTypes(meeting: Meeting, labels: Labels): CallTypeTag[] {
   }
 
   const everyExternalIsAdvised = externals.every((email) => {
-    const entry = labels.people.get(email);
+    const entry = labels.people.get(canonicalEmail(labels, email));
     return entry?.relationships.includes("advisor_to");
   });
   if (everyExternalIsAdvised) derived.push("advisory");
@@ -222,10 +262,15 @@ function buildPersonMarkdown(
   const lines: string[] = [];
   const entry = labels.people.get(person.email.toLowerCase());
   const relationships = entry?.relationships ?? [];
+  const aliases = [...person.aliases].sort();
 
   lines.push("---");
   lines.push(`name: "${person.name}"`);
   lines.push(`email: "${person.email}"`);
+  if (aliases.length > 0) {
+    lines.push("aliases:");
+    for (const a of aliases) lines.push(`  - "${a}"`);
+  }
   if (person.domain) lines.push(`company: "${person.domain}"`);
   lines.push(`meeting_count: ${person.meetingIds.length}`);
   const pRange = metRange(person.meetingIds, allMeetings);
@@ -246,6 +291,7 @@ function buildPersonMarkdown(
   lines.push(`# ${person.name}`);
   lines.push("");
   lines.push(`**Email:** ${person.email}`);
+  if (aliases.length > 0) lines.push(`**Also:** ${aliases.join(", ")}`);
   if (person.domain) lines.push(`**Company:** ${person.domain}`);
   lines.push(`**Meetings:** ${person.meetingIds.length}`);
   if (relationships.length > 0) {
@@ -279,6 +325,7 @@ function buildCompanyMarkdown(
   company: CompanyRecord,
   allMeetings: Map<number, Meeting>,
   peopleByDomain: Map<string, PersonRecord[]>,
+  people: Map<string, PersonRecord>,
   labels: Labels
 ): string {
   const lines: string[] = [];
@@ -338,7 +385,8 @@ function buildCompanyMarkdown(
   lines.push("");
   lines.push("## Contacts");
   lines.push("");
-  for (const name of [...company.people].sort()) {
+  const contactNames = [...company.people].map((e) => people.get(e)?.name ?? e);
+  for (const name of [...new Set(contactNames)].sort()) {
     lines.push(`- [${name}](../People/${sanitizeFilename(name)}.md)`);
   }
   lines.push("");
@@ -402,18 +450,30 @@ function main() {
 
     for (const inv of meeting.calendar_invitees) {
       const name = inv.name || inv.email.split("@")[0];
-      const key = inv.email.toLowerCase();
+      const raw = inv.email.toLowerCase();
+      const key = canonicalEmail(labels, raw);
+      const isCanonical = raw === key;
       const domain = extractDomain(inv.email);
 
       if (!people.has(key)) {
-        people.set(key, { name, email: inv.email, domain, meetingIds: [] });
+        people.set(key, {
+          name,
+          email: isCanonical ? inv.email : key,
+          domain: extractDomain(key),
+          meetingIds: [],
+          aliases: new Set(),
+          nameFromCanonical: false,
+        });
       }
       const person = people.get(key)!;
+      if (!isCanonical) person.aliases.add(raw);
       if (!person.meetingIds.includes(meeting.recording_id)) {
         person.meetingIds.push(meeting.recording_id);
       }
-      if (name && name !== person.name && inv.name) {
+      // The name on the canonical email wins over names seen on aliases.
+      if (inv.name && (isCanonical || !person.nameFromCanonical)) {
         person.name = inv.name;
+        if (isCanonical) person.nameFromCanonical = true;
       }
 
       if (domain) {
@@ -421,7 +481,7 @@ function main() {
           companies.set(domain, { domain, meetingIds: [], people: new Set() });
         }
         const company = companies.get(domain)!;
-        company.people.add(name);
+        company.people.add(key);
         if (!company.meetingIds.includes(meeting.recording_id)) {
           company.meetingIds.push(meeting.recording_id);
         }
@@ -444,19 +504,32 @@ function main() {
     peopleByDomain.get(p.domain)!.push(p);
   }
 
+  const personFiles = assignFilenames(people.values(), (p) => p.name, "People");
+  const companyFiles = assignFilenames(companies.values(), (c) => c.domain, "Companies");
+
   let personCount = 0;
-  for (const person of people.values()) {
-    const filename = sanitizeFilename(person.name);
+  const written = new Set<string>();
+  for (const [person, filename] of personFiles) {
     const md = buildPersonMarkdown(person, allMeetings, labels);
     writeFileSync(join(PEOPLE_DIR, `${filename}.md`), md);
+    written.add(`${filename}.md`);
     personCount++;
   }
   console.log(`  ${personCount} person files written to vault/People/`);
 
+  // Notes left behind by an email that is now an alias are orphans.
+  for (const f of readdirSync(PEOPLE_DIR)) {
+    if (!f.endsWith(".md") || written.has(f)) continue;
+    const email = noteEmail(join(PEOPLE_DIR, f));
+    if (email && labels.personAliases.has(email)) {
+      unlinkSync(join(PEOPLE_DIR, f));
+      console.log(`  removed alias orphan vault/People/${f}`);
+    }
+  }
+
   let companyCount = 0;
-  for (const company of companies.values()) {
-    const filename = sanitizeFilename(company.domain);
-    const md = buildCompanyMarkdown(company, allMeetings, peopleByDomain, labels);
+  for (const [company, filename] of companyFiles) {
+    const md = buildCompanyMarkdown(company, allMeetings, peopleByDomain, people, labels);
     writeFileSync(join(COMPANIES_DIR, `${filename}.md`), md);
     companyCount++;
   }
