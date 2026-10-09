@@ -13,6 +13,10 @@ ExecStart=%h/Documents/GitHub/FathomMCP/scripts/nightly-sync.sh
 # artifacts version together. paths.ts and nightly-sync.sh both honor this.
 Environment=FATHOM_DATA_ROOT=%h/Documents/GitHub/OM-Repo/fathom-vault
 
+# OneCLI agent token + gateway (FATHOM_API_KEY=Fathom placeholder). Leading
+# "-" means missing file is not fatal — nightly-sync.sh falls back to direct mode.
+EnvironmentFile=-%h/Documents/GitHub/FathomMCP/.env
+
 # Be a polite background citizen on a laptop.
 Nice=10
 IOSchedulingClass=best-effort
